@@ -13,13 +13,6 @@
 [image5]: ./output_images/find_cars_more_windows.png "Finding Cars in Image with More Sliding Windows"
 [image6]: ./output_images/heatmap.png "Original vs heatmap"
 [image7]: ./output_images/final_boxes.png "Final Image"
-[image8]: ./output_images/hls_channels.png "HLS Image Splitted in three channels"
-[image9]: ./output_images/binary_image.png "Binary Image"
-[image10]: ./output_images/histogram.png "Histogram"
-[image11]: ./output_images/sliding_window.png "Sliding Window and Fit a Polynomial"
-[image12]: ./output_images/skip_sliding_window.png "Skip Sliding Window and Fit a Polynomial"
-[image13]: ./output_images/new_image.png "Image with Lane Lines Found"
-[image14]: ./output_images/new_image_with_data.png "Final Image"
 
 ### This is the fifth project of self-driving cars engineer nanodegree. In this project we will detect and make tracking of cars.
 
@@ -369,13 +362,13 @@ print('Using:',orient,'orientations',pix_per_cell, 'pixels per cell and', cell_p
 print('Feature vector length:', len(X_train[0]))
 
 #parameters = {'kernel':('linear', 'rbf'), 'C':[1, 10]}
-svc = svm.SVC()
+svc = svm.SVC(C=0.1)
 #svc = GridSearchCV(svr, parameters)
 t=time.time()
 svc.fit(X_train, y_train)
 
 # Use a linear SVC 
-#svc = LinearSVC()
+#svc = LinearSVC(C=0.01)
 
 # Check the training time for the SVC
 #t=time.time()
@@ -395,15 +388,15 @@ print(round(t2-t, 5), 'Seconds to predict', n_predict,'labels with SVC')
 which result:
 
 ```python
-78.97 Seconds to extract HOG features...
+97.9 Seconds to extract HOG features...
 8792 8968
 Using: 11 orientations 16 pixels per cell and 2 cells per block
 Feature vector length: 1188
-39.74 Seconds to train SVC...
-Test Accuracy of SVC =  0.9854
-My SVC predicts:  [ 0.  0.  1.  1.  1.  1.  1.  1.  0.  0.]
-For these 10 labels:  [ 0.  0.  1.  1.  1.  1.  1.  1.  0.  0.]
-0.02741 Seconds to predict 10 labels with SVC
+111.91 Seconds to train SVC...
+Test Accuracy of SVC =  0.9716
+My SVC predicts:  [ 1.  1.  1.  1.  1.  1.  0.  0.  0.  1.]
+For these 10 labels:  [ 1.  1.  1.  1.  1.  1.  0.  0.  0.  1.]
+0.13104 Seconds to predict 10 labels with SVC
 ```
 
 I tested with various color spaces and I realized that YUV was the best choice. But, in `hog` method I used `transform_sqrt=True` I had to scale image like this `image = (image * 255).astype(np.uint8)`. Another thing is that I tested with a `LinearSVC` but I get a max accuracy of 96% so I decided to use the standard `SVC` with `C=1.0, kernel='rbf'` which have an accuracy of 98.54% as you can see.
@@ -515,6 +508,8 @@ which returns
 
 ![alt text][image4]
 
+in `find_cars` method I cropped image in height to `ystart` and `ystop`. Next, I trasformed to a selected color space (in this case I used YUV). As I used YUV, I scaled the resulting image to have values from 0 to 255. If scale is not 1, I resize it depending on scale. For example, if we have `ystart=400, ystop=496, scale=1.5` it will resize image to a height of 64px by dividing by scale. the HOG features are extracted from the resultin image, and then, depending on the window size, those features are subsampled to finally feed the classifier.
+
 ## 8. Testing with Different Sliding Window Ranges
 
 Here I defined a method to detect cars in different windows, because, as we know, as closer is the car, the bigger it is. also, this will welp to assure if it is a car.
@@ -547,10 +542,8 @@ cell_per_block = 2
 # (ystart, ystop, scale)
 params = [
     (400, 464, 1),
-    (400, 500, 1.5),
+    (400, 596, 1.5),
 ]
-
-
 
 draw_img, rectangles = find_cars_more_windows(params, test_img, svc, orient, pix_per_cell, cell_per_block, colorspace)
     
@@ -566,11 +559,11 @@ As we can see, this improve the cars finding. I only defined two windows:
 # (ystart, ystop, scale)
 params = [
     (400, 464, 1),
-    (400, 500, 1.5),
+    (400, 496, 1.5),
 ]
 ```
 
-When I added more windows, it started to found false positives.
+I selected the windows starting from 400px as ystart because, at least for this case, cars does not exceed this height. Then, I first look for cars of `64x64px` size, so I use `ystart=400` and `ystop=464` and `scale=1` because the images from dataset are also `64x64px` size. The next windows I look for cars with `96x96px` and `scale=1.5` because `64*1.5=96`. I tried to add more windows like `(416, 480, 1)` and `(432, 528, 1.5)` but it started to find false positives. So I kept this two windows. However, once tested on video these params where changed, Check out conclusions to see more about it.
 
 ## 9. Applying Headmap
 
@@ -615,7 +608,7 @@ def apply_heatmap(draw_img, rectangles):
     heat = add_heat(heat, rectangles)
 
     # Apply threshold to help remove false positives
-    heat = apply_threshold(heat,1)
+    heat = apply_threshold(heat,2)
 
     # Visualize the heatmap when displaying    
     heatmap = np.clip(heat, 0, 255)
@@ -646,7 +639,7 @@ which results
 
 ![alt text][image6]
 
-As we can see, the image shows with a strong with yellow/white spots which tell us where the cars are.
+As we can see, the image shows with a strong with yellow/white spots which tell us where the cars are. Heatmap help us to understand better where are the cars found by the classifier. Then, when the labeled bounding boxes are drawn, we only look for brightest areas. If a false positive is found, trying with differents windows and subsampling the image will help to detect real cars by looking where more rectangles are gathered or where the image has the hottest areas.
 
 ## 10. Drawing Labeled Bounding Boxes
 
@@ -686,15 +679,16 @@ wchich results:
 Now I defined the pipeline for the videos:
 
 ```python
+from collections import deque
 class Detections():
     def __init__(self):
-        self.rectangles = [] 
+        self.rectangles = deque(maxlen = 12) 
         
     def add_new_rectangles(self, new_rectangles):
         self.rectangles += new_rectangles
         
-        if len(self.rectangles) > 20:
-            self.rectangles = self.rectangles[len(self.rectangles)-20:]
+        #if len(self.rectangles) > 20:
+        #   self.rectangles = self.rectangles[len(self.rectangles)-20:]
 
 def detect_vehicles(img):
     colorspace = 'YUV' # Can be RGB, HSV, LUV, HLS, YUV, YCrCb
@@ -704,8 +698,7 @@ def detect_vehicles(img):
 
     # (ystart, ystop, scale)
     params = [
-        (400, 500, 1.5),
-        (400, 530, 2),
+        (420, 516, 1.5),
     ]
     
     draw_img, rectangles = find_cars_more_windows(params, img, svc, orient, pix_per_cell, cell_per_block, colorspace)
@@ -733,19 +726,30 @@ clip_test_out = clip_test.fl_image(detect_vehicles)
 %time clip_test_out.write_videofile(test_out_file, audio=False)
 ```
 
-<a href="https://youtu.be/usGqyDuXK68" target="_blank">Here's a link to my video result</a>
+<a href="https://youtu.be/usGqyDuXK68" target="_blank">Here's a link to my video result V1</a>
+
+<a href="https://youtu.be/V1pYocnbMQs" target="_blank">Here's a link to my video result V2</a>
 ---
 
 # Conclusion
 
 When I tested my code with the challenges videos I saw the next issues:
 
+## V1
+
 * At the start of the project video, the code "finds" a car in left mountains, but then it improve tracking.
 * As I saw, the best color space for this project is YUV with `transform_sqrt=True` to help to improve robustness against shadows. Other color spaces has a lot o noise.
-* Also, I've found that using standard SVC with `kernel='rbf' and C=1` worked a lot better than LinearSVC.
-* I would like to try with more data, like the udacity dataset, but my computer has memory limitations, I think that the problem at the start of the video is because I need more data.
+* Also, I've found that using standard SVC with `kernel='rbf'` worked a lot better than LinearSVC.
+* I would like to try with more data, like the udacity dataset, but my computer has memory limitations.
 * Also it would be nice to try a different algorithm.
 * I just focused on HOG features because when I added bin_spatial and color history didn't work as expected.
+
+## V2
+
+* After make a test with the project video, I found that in the first 7 seconds to false positive stood for too long, I solved this by changing `C=0.1` in the classifier while maintaining `kernel='rbf'`, changing heatmap threshold to 2 and moving windows from 400px to 420px.
+* Thanks to reviewer suggestions I changed in class `Detections` the max history of rectangles to 12, because it might cause a bit of latency in the pipeline.
+* Finally for the project video I decided to have only `params = [(420, 516, 1.5)]` solve the problem of false positives.
+* I have to make some more tests to find a balance between false positives and not finding anything.
 
 As always, I enjoyed it a lot and I already want to see what is comming next.
 
